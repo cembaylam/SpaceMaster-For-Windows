@@ -8,6 +8,9 @@ See at a glance which folders eat your disk, and delete them safely.
 The Windows sibling of [SpaceMaster for macOS](https://github.com/cembaylam/SpaceMaster). Written in Rust, drawn with
 Direct2D/DirectWrite, tuned for one machine (Ryzen 9 5950X, `target-cpu=native`): no compatibility baggage.
 
+<p align="center"><img src="docs/images/light.png" alt="SpaceMaster in light mode" width="860"></p>
+<p align="center"><img src="docs/images/dark.png" alt="SpaceMaster in dark mode with the file info panel" width="860"></p>
+
 ## Features
 
 - **Instant sizes.** A multi-threaded scanner lists directories in bulk (`GetFileInformationByHandleEx`) and opens
@@ -43,6 +46,8 @@ Direct2D/DirectWrite, tuned for one machine (Ryzen 9 5950X, `target-cpu=native`)
 | `y` · `Ctrl+C` · `R` | copy path · copy files · show in File Explorer |
 
 `?` or `F1` shows the list inside the app.
+
+<p align="center"><img src="docs/images/help.png" alt="Keyboard shortcuts overlay" width="760"></p>
 
 ## Build, run, test
 
