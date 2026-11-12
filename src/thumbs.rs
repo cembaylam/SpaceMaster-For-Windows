@@ -118,3 +118,9 @@ fn fetch(req: &Request) -> Option<Result> {
         Some(Result { key: req.key.clone(), w, h, data })
     }
 }
+
+/// Shell thumbnail of up to side x side pixels as premultiplied BGRA (blocking; call from a worker thread).
+pub fn fetch_image(path: &str, side: u32) -> Option<(u32, u32, Vec<u8>)> {
+    let r = fetch(&Request { key: String::new(), path: path.to_string(), w: side, h: side })?;
+    (r.w > 0).then_some((r.w, r.h, r.data))
+}

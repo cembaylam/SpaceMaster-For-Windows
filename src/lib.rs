@@ -11,6 +11,7 @@ pub mod listing;
 pub mod model;
 pub mod node;
 pub mod paths;
+pub mod pdf;
 pub mod safety;
 pub mod scanner;
 pub mod settings;

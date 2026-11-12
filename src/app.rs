@@ -24,6 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 mod selftest;
 use crate::thumbs;
+use crate::viewer::{self, Act};
 use windows::Win32::Graphics::Direct2D::ID2D1Bitmap;
 
 struct Thumb {
@@ -109,6 +110,8 @@ pub struct App {
     help: bool,
     banner_dismissed: bool,
     elevated: bool,
+    viewer: viewer::Viewer,
+    fs_saved: Option<(isize, WINDOWPLACEMENT)>,
     timer_on: bool,
     tracking: bool,
     wheel: [f32; 3],
@@ -279,6 +282,15 @@ impl App {
 
     fn paint(&mut self) {
         if !self.gfx.begin() {
+            return;
+        }
+        if self.viewer.active {
+            let t = self.theme;
+            self.viewer.paint(&mut self.gfx, &t);
+            self.viewer.place_children(&self.gfx);
+            if !self.gfx.end() {
+                self.invalidate();
+            }
             return;
         }
         let lay = self.layout();
@@ -713,13 +725,14 @@ impl App {
         self.gfx.fill_round(r, 10.0, t.panel);
         self.gfx.stroke_round(r.inset(0.5), 10.0, t.separator, 1.0);
         self.gfx.text("Keyboard shortcuts", Face::Big, Rect::new(r.x + 24.0, r.y + 14.0, r.w - 48.0, 36.0), Align::Left, t.text);
-        const ROWS: [(&str, &str); 23] = [
+        const ROWS: [(&str, &str); 24] = [
             ("j k  \u{2191} \u{2193}", "move cursor"),
             ("h l  \u{2190} \u{2192}  Bksp", "parent / enter folder"),
             ("gg  G  Ctrl+d  Ctrl+u", "top / bottom / half page"),
             ("H L  Alt+\u{2190} Alt+\u{2192}", "history back / forward"),
             ("Enter  o", "open file (folders: enter)"),
-            ("Space  Tab  v  Ctrl+A", "select + next / select all"),
+            ("Tab  v  Ctrl+A", "select + next / select all"),
+            ("Space", "open the viewer (image, video, PDF, text, code, HTML ...)"),
             ("d  Del", "move to Recycle Bin (Ctrl+Z undo)"),
             ("D  Shift+Del", "delete permanently"),
             (".", "show / hide hidden files"),
@@ -957,13 +970,38 @@ impl App {
         self.after_input();
     }
 
-    fn key_down(&mut self, vk: u16) -> bool {
+    fn key_down(&mut self, vk: u16, repeat: bool) -> bool {
         let ctrl = key_down(VK_CONTROL.0 as i32);
         let shift = key_down(VK_SHIFT.0 as i32);
         let alt = key_down(VK_MENU.0 as i32);
         if self.help {
             self.help = false;
             self.invalidate();
+            return true;
+        }
+        if self.viewer.active {
+            if ctrl && !alt {
+                if let Some(d) = zoom_action(vk) {
+                    self.viewer.zoom_key(d);
+                    self.invalidate();
+                    return true;
+                }
+            }
+            let key = match VIRTUAL_KEY(vk) {
+                VK_UP => Key::Up,
+                VK_DOWN => Key::Down,
+                VK_LEFT => Key::Left,
+                VK_RIGHT => Key::Right,
+                VK_ESCAPE => Key::Escape,
+                VK_PRIOR => Key::PageUp,
+                VK_NEXT => Key::PageDown,
+                VK_HOME => Key::Home,
+                VK_END => Key::End,
+                v if ctrl && v.0 == b'C' as u16 => Key::Char('c'),
+                _ => return false,
+            };
+            let act = self.viewer.key(KeyEvent { key, ctrl, shift, alt }, vk, repeat);
+            self.apply_viewer_act(act);
             return true;
         }
         if ctrl && !alt {
@@ -1010,7 +1048,7 @@ impl App {
         handled
     }
 
-    fn char_input(&mut self, unit: u16) {
+    fn char_input(&mut self, unit: u16, repeat: bool) {
         if key_down(VK_CONTROL.0 as i32) && !key_down(VK_MENU.0 as i32) {
             return;
         }
@@ -1036,11 +1074,101 @@ impl App {
             }
             return;
         }
+        if self.viewer.active {
+            let act = self.viewer.ch(c, repeat);
+            self.apply_viewer_act(act);
+            return;
+        }
         self.browser.handle_key(KeyEvent::ch(c));
         self.after_input();
     }
 
+    fn open_viewer(&mut self, path: &str) {
+        let dark = self.theme.dark;
+        self.viewer.open(self.hwnd.0 as isize, path, dark);
+        self.ensure_timer();
+        self.invalidate();
+    }
+
+    fn apply_viewer_act(&mut self, act: Act) {
+        match act {
+            Act::None => {}
+            Act::Close => {
+                if self.viewer.fullscreen {
+                    self.toggle_fullscreen();
+                }
+                self.viewer.close();
+                self.sync_view();
+            }
+            Act::Step(d) => self.viewer_step(d),
+            Act::Maximize => unsafe {
+                let _ = ShowWindow(self.hwnd, if IsZoomed(self.hwnd).as_bool() { SW_RESTORE } else { SW_MAXIMIZE });
+            },
+            Act::Fullscreen => self.toggle_fullscreen(),
+            Act::Copy(text) => {
+                shell::set_clipboard_text(self.hwnd, &text);
+            }
+        }
+        self.invalidate();
+        self.ensure_timer();
+    }
+
+    /// n / p: the next / previous file (not folder) in the current list.
+    fn viewer_step(&mut self, dir: i32) {
+        let n = self.browser.current.borrow().rows.len() as i32;
+        let mut i = self.browser.cursor_index() as i32 + dir;
+        while i >= 0 && i < n {
+            let (is_dir, name) = {
+                let s = self.browser.current.borrow();
+                (s.rows[i as usize].is_dir(), s.rows[i as usize].name.clone())
+            };
+            if !is_dir {
+                self.browser.move_cursor(i as isize);
+                let p = self.browser.path_of(&name);
+                self.open_viewer(&p);
+                return;
+            }
+            i += dir;
+        }
+    }
+
+    fn toggle_fullscreen(&mut self) {
+        unsafe {
+            if let Some((style, wp)) = self.fs_saved.take() {
+                SetWindowLongPtrW(self.hwnd, GWL_STYLE, style);
+                let _ = SetWindowPlacement(self.hwnd, &wp);
+                let _ = SetWindowPos(self.hwnd, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                self.viewer.fullscreen = false;
+            } else {
+                let style = GetWindowLongPtrW(self.hwnd, GWL_STYLE);
+                let mut wp = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+                let _ = GetWindowPlacement(self.hwnd, &mut wp);
+                let mon = windows::Win32::Graphics::Gdi::MonitorFromWindow(self.hwnd, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST);
+                let mut mi = windows::Win32::Graphics::Gdi::MONITORINFO { cbSize: std::mem::size_of::<windows::Win32::Graphics::Gdi::MONITORINFO>() as u32, ..Default::default() };
+                if windows::Win32::Graphics::Gdi::GetMonitorInfoW(mon, &mut mi).as_bool() {
+                    SetWindowLongPtrW(self.hwnd, GWL_STYLE, style & !(WS_OVERLAPPEDWINDOW.0 as isize));
+                    let r = mi.rcMonitor;
+                    let _ = SetWindowPos(self.hwnd, Some(HWND_TOP), r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED | SWP_NOACTIVATE);
+                    self.fs_saved = Some((style, wp));
+                    self.viewer.fullscreen = true;
+                }
+            }
+        }
+    }
+
     fn timer(&mut self) {
+        if self.viewer.active {
+            if self.viewer.tick() {
+                self.invalidate();
+            }
+            if !self.viewer.needs_timer() {
+                unsafe {
+                    let _ = KillTimer(Some(self.hwnd), TIMER_ID);
+                }
+                self.timer_on = false;
+            }
+            return;
+        }
         let dirty = self.browser.poll();
         let busy = self.browser.is_busy() || self.browser.any_calculating();
         if busy {
@@ -1387,6 +1515,8 @@ pub fn run() -> i32 {
             help: false,
             banner_dismissed: false,
             elevated: shell::is_elevated(),
+            viewer: viewer::Viewer::new(),
+            fs_saved: None,
             timer_on: false,
             tracking: false,
             wheel: [0.0; 3],
@@ -1436,6 +1566,11 @@ fn pump_events() {
                 Event::CopyText(t) => shell::set_clipboard_text(hwnd, &t),
                 Event::CopyFiles(f) => shell::set_clipboard_files(hwnd, &f),
                 Event::OpenRecycleBin => shell::open_recycle_bin(hwnd),
+                Event::OpenViewer(p) => {
+                    if let Some(a) = app() {
+                        a.open_viewer(&p);
+                    }
+                }
                 Event::ShowHelp => {
                     if let Some(a) = app() {
                         a.help = true;
@@ -1524,7 +1659,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_MOUSEMOVE => {
             let (x, y) = client_xy(lparam, scale);
+            if a.viewer.active {
+                if a.viewer.mouse_move(&a.gfx, x, y) {
+                    a.invalidate();
+                }
+                return LRESULT(0);
+            }
             a.mouse_move(x, y);
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            if a.viewer.active {
+                a.viewer.mouse_up();
+                let _ = windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
+            }
             LRESULT(0)
         }
         WM_MOUSELEAVE => {
@@ -1533,12 +1681,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
             let (x, y) = client_xy(lparam, scale);
+            if a.viewer.active {
+                if a.viewer.mouse_down(&a.gfx, x, y) {
+                    windows::Win32::UI::Input::KeyboardAndMouse::SetCapture(hwnd);
+                }
+                a.invalidate();
+                return LRESULT(0);
+            }
             a.click(x, y, msg == WM_LBUTTONDBLCLK);
             pump_events();
             LRESULT(0)
         }
         WM_RBUTTONUP => {
             let (x, y) = client_xy(lparam, scale);
+            if a.viewer.active {
+                return LRESULT(0);
+            }
             a.context_menu(x, y);
             pump_events();
             LRESULT(0)
@@ -1547,7 +1705,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let delta = ((wparam.0 >> 16) & 0xFFFF) as i16 as i32;
             let mut pt = POINT { x: (lparam.0 & 0xFFFF) as i16 as i32, y: ((lparam.0 >> 16) & 0xFFFF) as i16 as i32 };
             let _ = ScreenToClient(hwnd, &mut pt);
-            if key_down(VK_CONTROL.0 as i32) {
+            if a.viewer.active {
+                a.viewer.wheel(delta, key_down(VK_CONTROL.0 as i32));
+                a.invalidate();
+            } else if key_down(VK_CONTROL.0 as i32) {
                 a.change_zoom(if delta > 0 { 1 } else { -1 });
             } else {
                 a.wheel(pt.x as f32 / scale, pt.y as f32 / scale, delta);
@@ -1555,18 +1716,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_KEYDOWN | WM_SYSKEYDOWN => {
-            let handled = a.key_down(wparam.0 as u16);
+            let handled = a.key_down(wparam.0 as u16, (lparam.0 >> 30) & 1 == 1);
             pump_events();
             if handled { LRESULT(0) } else { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         WM_CHAR => {
-            a.char_input(wparam.0 as u16);
+            a.char_input(wparam.0 as u16, (lparam.0 >> 30) & 1 == 1);
             pump_events();
             LRESULT(0)
         }
         WM_SETFOCUS => LRESULT(0),
         WM_ACTIVATE => {
-            if (wparam.0 & 0xFFFF) != 0 && a.browser.deleting == 0 {
+            if (wparam.0 & 0xFFFF) != 0 && a.browser.deleting == 0 && !a.viewer.active {
                 a.browser.app_activated();
                 a.after_input();
             }
@@ -1575,6 +1736,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_SETTINGCHANGE => {
             a.apply_theme();
             DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        viewer::WM_VIEWER => {
+            let l = Box::from_raw(lparam.0 as *mut viewer::Loaded);
+            let (dark, bg) = (a.theme.dark, a.theme.window);
+            a.viewer.loaded(hwnd.0 as isize, *l, dark, bg);
+            a.invalidate();
+            a.ensure_timer();
+            LRESULT(0)
         }
         thumbs::WM_THUMB => {
             let r = Box::from_raw(lparam.0 as *mut thumbs::Result);

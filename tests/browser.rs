@@ -256,14 +256,14 @@ fn selection_and_summary() {
     let h = Home::new("select");
     standard(&h);
     let mut b = h.browser();
-    keys(&mut b, " "); // select big, advance
-    keys(&mut b, " "); // select medium, advance
+    b.handle_key(KeyEvent::new(Key::Tab)); // select big, advance
+    b.handle_key(KeyEvent::new(Key::Tab)); // select medium, advance
     assert_eq!(b.selection.len(), 2);
     assert_eq!(b.cursor_name.as_deref(), Some("small"));
     assert!(b.summary().starts_with("2 selected"), "{}", b.summary());
-    // Space again on a selected row deselects.
+    // Tab again on a selected row deselects.
     keys(&mut b, "k");
-    keys(&mut b, " ");
+    b.handle_key(KeyEvent::new(Key::Tab));
     assert_eq!(b.selection.len(), 1);
     b.handle_key(KeyEvent::new(Key::Escape));
     assert!(b.selection.is_empty());
@@ -282,6 +282,23 @@ fn selection_and_summary() {
     b.click_row(0, false, false);
     assert!(b.selection.is_empty());
     assert_eq!(b.cursor_index(), 0);
+}
+
+#[test]
+fn space_opens_the_viewer_and_no_longer_marks()  {
+    let h = Home::new("space");
+    standard(&h);
+    let mut b = h.browser();
+    b.events.clear();
+    b.cursor_name = Some("a.txt".into());
+    keys(&mut b, " ");
+    assert!(matches!(b.events.last(), Some(Event::OpenViewer(p)) if p == &format!("{}\\a.txt", h.s())));
+    assert!(b.selection.is_empty(), "Space must not mark files");
+    // On a folder Space does nothing.
+    b.events.clear();
+    b.cursor_name = Some("big".into());
+    keys(&mut b, " ");
+    assert!(b.events.is_empty());
 }
 
 #[test]

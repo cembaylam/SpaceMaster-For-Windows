@@ -2,6 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+if (-not (Test-Path "libvlc\win-x64\libvlc.dll")) { & "$PSScriptRoot\fetch-libvlc.ps1" }
 cargo build --release
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value

@@ -91,6 +91,8 @@ pub struct DeleteOutcome {
 /// Things the front end has to do on behalf of the controller.
 pub enum Event {
     Open(String),
+    /// Space: the built-in viewer for this file.
+    OpenViewer(String),
     Reveal(Vec<String>),
     CopyText(String),
     CopyFiles(Vec<String>),
@@ -332,6 +334,16 @@ impl Browser {
         }
     }
 
+    /// Space: opens the built-in viewer on the file under the cursor (folders: nothing).
+    pub fn open_viewer(&mut self) {
+        if let Some(r) = self.cursor_row() {
+            if !r.is_dir() {
+                let p = self.path_of(&r.name);
+                self.events.push(Event::OpenViewer(p));
+            }
+        }
+    }
+
     pub fn open_cursor(&mut self) {
         if let Some(r) = self.cursor_row() {
             let p = self.path_of(&r.name);
@@ -567,7 +579,7 @@ impl Browser {
                 'G' => self.move_cursor(isize::MAX),
                 'H' => self.go_back(),
                 'L' => self.go_forward(),
-                ' ' => self.toggle_select_and_advance(),
+                ' ' => self.open_viewer(),
                 'v' => self.select_all(),
                 'd' => self.request_delete(false),
                 'D' => self.request_delete(true),

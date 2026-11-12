@@ -34,7 +34,8 @@ Direct2D/DirectWrite, tuned for one machine (Ryzen 9 5950X, `target-cpu=native`)
 | `gg` `G` · `Ctrl+d` `Ctrl+u` | top / bottom · half page |
 | `H` `L` (`Alt+←` `Alt+→`) | history back / forward |
 | `Enter` `o` | open file (folders: enter) |
-| `Space` `Tab` · `v` · `Ctrl+A` | select + next · select all |
+| `Space` | open the built-in viewer (see below) |
+| `Tab` · `v` · `Ctrl+A` | select + next · select all |
 | `d` `Del` | move to Recycle Bin (`Ctrl+Z` undo) |
 | `D` `Shift+Del` | delete permanently |
 | `.` | show / hide hidden files |
@@ -49,6 +50,21 @@ Direct2D/DirectWrite, tuned for one machine (Ryzen 9 5950X, `target-cpu=native`)
 
 <p align="center"><img src="docs/images/help.png" alt="Keyboard shortcuts overlay" width="760"></p>
 
+## Viewer (Space)
+
+Everything is built in, no external programs. Like FileMaster, every file type has a viewer:
+
+- **Images** (zoom, pan, fit, centered), **PDF** (Windows' own engine, continuous scroll, zoom), **video and audio**
+  (LibVLC with fast keyframe seeking: `←/→` seek 10 s, hold to scrub with acceleration, `Shift` 30 s, `Ctrl` 1 min,
+  `0`-`9` jump to 0-90 %, `j/k` volume, `m` mute, `f` fullscreen, click or drag the bar).
+- **Text and code** with syntax colors in Fira Code (virtualized, instant scrolling, `Ctrl+C` copies all),
+  **Markdown and HTML** rendered (WebView2), **Word/Excel/PowerPoint/OpenDocument** text, **archive** contents
+  (zip, 7z, tar, tar.gz/xz/bz2...), and a **hex view** for anything else.
+- `n` / `p` next / previous file, `Esc` `q` or `Space` close, `+` `-` `0` zoom, `g` `G` top / bottom, `f` maximize.
+
+The video engine (about 100 MB) is bundled by the installer; for development run `scripts\fetch-libvlc.ps1 -Source <dir>`
+once (any VLC 3.x `win-x64` libvlc folder) or set `SM_LIBVLC_DIR`.
+
 ## Build, run, test
 
 Requires Rust (stable, MSVC) and the Visual Studio C++ build tools.
@@ -58,7 +74,7 @@ cargo run --release                       # build and launch
 cargo test                                # 67 tests incl. a real-window UI self-test
 cargo run --release --bin sm-bench -- C:\ --runs 3        # scanner benchmark
 cargo run --release --bin sm-bench -- --stress 100000     # big-folder UI timings
-.\scripts\package.ps1                     # dist\SpaceMaster-1.0.1-win-x64.zip
+.\scripts\package.ps1                     # dist\SpaceMaster-1.0.2-win-x64.zip
 ```
 
 Tests: unit tests (formatting, safety rules, Recycle Bin parsing), scanner tests against an independent `std::fs` walk

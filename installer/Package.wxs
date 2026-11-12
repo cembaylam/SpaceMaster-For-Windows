@@ -14,13 +14,18 @@
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/cembaylam/SpaceMaster" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="SpaceMaster for Windows" />
+      <Directory Id="INSTALLFOLDER" Name="SpaceMaster for Windows">
+        <Directory Id="LIBVLCDIR" Name="libvlc">
+          <Directory Id="LIBVLCWIN" Name="win-x64" />
+        </Directory>
+      </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
     <StandardDirectory Id="DesktopFolder" />
 
     <Feature Id="Main" Title="SpaceMaster for Windows" Level="1" AllowAbsent="no">
       <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="VideoEngine" />
     </Feature>
     <Feature Id="DesktopShortcut" Title="Desktop shortcut" Level="2" AllowAbsent="yes">
       <ComponentRef Id="DesktopShortcutComponent" />
@@ -39,6 +44,13 @@
                Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
     </UI>
   </Package>
+
+  <Fragment>
+    <!-- LibVLC engine for the built-in video player (see scripts\fetch-libvlc.ps1) -->
+    <ComponentGroup Id="VideoEngine" Directory="LIBVLCWIN">
+      <Files Include="..\libvlc\win-x64\**" />
+    </ComponentGroup>
+  </Fragment>
 
   <Fragment>
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">

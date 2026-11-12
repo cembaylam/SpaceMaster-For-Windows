@@ -2,6 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+if (-not (Test-Path "libvlc\win-x64\libvlc.dll")) { & "$PSScriptRoot\fetch-libvlc.ps1" }
 cargo build --release
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
@@ -10,6 +11,7 @@ Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory $stage -Force | Out-Null
 Copy-Item target\release\spacemaster.exe, README.md, LICENSE $stage
 Copy-Item target\release\sm-bench.exe $stage
+Copy-Item libvlc -Destination $stage -Recurse
 $zip = "$stage.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
 Compress-Archive -Path "$stage\*" -DestinationPath $zip

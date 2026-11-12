@@ -1,6 +1,6 @@
 [package]
 name = "spacemaster"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "A very fast, native disk-space manager for Windows 11."
 license = "MIT"
@@ -22,6 +22,11 @@ path = "src/bin/sm-bench.rs"
 version = "0.62"
 features = [
     "Win32_Foundation",
+    "Data_Pdf",
+    "Storage",
+    "Storage_Streams",
+    "Foundation",
+    "UI",
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",

@@ -2,3 +2,5 @@
 /dist
 *.log
 /installer/license.rtf
+/.claude/worktrees
+/libvlc

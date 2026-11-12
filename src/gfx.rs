@@ -130,6 +130,11 @@ pub struct Gfx {
     zoom: f32,
     px: (u32, u32),
     generation: u32,
+    code_font_tried: bool,
+    code_collection: Option<IDWriteFontCollection1>,
+    code_formats: HashMap<u32, IDWriteTextFormat>,
+    code_brushes: HashMap<u32, ID2D1SolidColorBrush>,
+    code_brush_gen: u32,
     pub width: f32,
     pub height: f32,
     glyph_font: &'static str,
@@ -160,6 +165,11 @@ impl Gfx {
             zoom: 1.0,
             px: (1, 1),
             generation: 0,
+            code_font_tried: false,
+            code_collection: None,
+            code_formats: HashMap::new(),
+            code_brushes: HashMap::new(),
+            code_brush_gen: 0,
             width: 0.0,
             height: 0.0,
             glyph_font: "Segoe Fluent Icons",
@@ -661,6 +671,124 @@ impl Gfx {
     pub fn draw_scaled(&self, bmp: &ID2D1Bitmap, dest: Rect) {
         unsafe {
             self.rt().DrawBitmap(bmp, Some(&dest.d2d()), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+        }
+    }
+}
+
+// MARK: Code text (viewer): bundled Fira Code, per-range colours
+
+use windows::core::IUnknown;
+
+impl Gfx {
+    /// Registers the bundled Fira Code (SIL OFL) as a private font collection; falls back to Consolas.
+    fn ensure_code_font(&mut self) {
+        if self.code_font_tried {
+            return;
+        }
+        self.code_font_tried = true;
+        let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("SpaceMaster").join("fonts")) else {
+            return;
+        };
+        let file = dir.join("FiraCode-Regular.ttf");
+        let bytes: &[u8] = include_bytes!("../assets/fonts/FiraCode-Regular.ttf");
+        if std::fs::metadata(&file).map(|m| m.len() != bytes.len() as u64).unwrap_or(true) {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(&file, bytes);
+        }
+        let wide: Vec<u16> = file.to_string_lossy().encode_utf16().chain([0]).collect();
+        let coll = (|| -> Option<IDWriteFontCollection1> {
+            unsafe {
+                let f5: IDWriteFactory5 = self.dwrite.cast().ok()?;
+                let ff = f5.CreateFontFileReference(PCWSTR(wide.as_ptr()), None).ok()?;
+                let builder = f5.CreateFontSetBuilder().ok()?;
+                builder.AddFontFile(&ff).ok()?;
+                let set = builder.CreateFontSet().ok()?;
+                f5.CreateFontCollectionFromFontSet(&set).ok()
+            }
+        })();
+        self.code_collection = coll;
+    }
+
+    fn code_format(&mut self, size: f32) -> Option<IDWriteTextFormat> {
+        self.ensure_code_font();
+        let key = (size * 10.0) as u32;
+        if let Some(f) = self.code_formats.get(&key) {
+            return Some(f.clone());
+        }
+        let (family, coll) = match &self.code_collection {
+            Some(c) => ("Fira Code", Some(c.clone())),
+            None => ("Consolas", None),
+        };
+        let fam: Vec<u16> = family.encode_utf16().chain([0]).collect();
+        let f = unsafe {
+            self.dwrite
+                .CreateTextFormat(
+                    PCWSTR(fam.as_ptr()),
+                    coll.as_ref().map(|c| c.cast::<IDWriteFontCollection>().unwrap()).as_ref(),
+                    DWRITE_FONT_WEIGHT_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL,
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    size,
+                    w!("en-us"),
+                )
+                .ok()?
+        };
+        unsafe {
+            let _ = f.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            let _ = f.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            let _ = f.SetIncrementalTabStop(size * 0.6 * 4.0);
+        }
+        self.code_formats.insert(key, f.clone());
+        Some(f)
+    }
+
+    /// Width of one monospace cell.
+    pub fn code_cell_width(&mut self, size: f32) -> f32 {
+        let Some(f) = self.code_format(size) else { return size * 0.6 };
+        let w: Vec<u16> = "0".encode_utf16().collect();
+        let Ok(l) = (unsafe { self.dwrite.CreateTextLayout(&w, &f, 1000.0, 100.0) }) else { return size * 0.6 };
+        let mut m = DWRITE_TEXT_METRICS::default();
+        unsafe {
+            let _ = l.GetMetrics(&mut m);
+        }
+        m.widthIncludingTrailingWhitespace
+    }
+
+    /// One line of code with colour ranges `(start, len, 0xRRGGBB)` in UTF-16 units.
+    pub fn code_layout(&mut self, line: &str, size: f32, spans: &[(u32, u32, u32)]) -> Option<IDWriteTextLayout> {
+        let f = self.code_format(size)?;
+        if self.code_brush_gen != self.generation {
+            self.code_brushes.clear();
+            self.code_brush_gen = self.generation;
+        }
+        let w: Vec<u16> = line.encode_utf16().collect();
+        let layout = unsafe { self.dwrite.CreateTextLayout(&w, &f, 100_000.0, size * 2.0).ok()? };
+        for &(s, l, rgb) in spans {
+            if l == 0 || s as usize >= w.len() {
+                continue;
+            }
+            let l = l.min(w.len() as u32 - s);
+            if !self.code_brushes.contains_key(&rgb) {
+                let c = Color::rgb(rgb).d2d();
+                if let Some(rt) = &self.rt {
+                    if let Ok(b) = unsafe { rt.CreateSolidColorBrush(&c, None) } {
+                        self.code_brushes.insert(rgb, b);
+                    }
+                }
+            }
+            if let Some(b) = self.code_brushes.get(&rgb) {
+                let unk: IUnknown = b.cast().ok()?;
+                unsafe {
+                    let _ = layout.SetDrawingEffect(&unk, DWRITE_TEXT_RANGE { startPosition: s, length: l });
+                }
+            }
+        }
+        Some(layout)
+    }
+
+    pub fn draw_layout(&self, l: &IDWriteTextLayout, x: f32, y: f32, c: Color) {
+        unsafe {
+            self.rt().DrawTextLayout(Vector2::new(self.snap(x), self.snap(y)), l, self.brush(c), D2D1_DRAW_TEXT_OPTIONS_NONE);
         }
     }
 }
