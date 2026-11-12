@@ -8,7 +8,7 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN};
 use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_SMALLICON, SHGFI_USEFILEATTRIBUTES};
@@ -129,6 +129,7 @@ pub struct Gfx {
     base_dpi: f32,
     zoom: f32,
     px: (u32, u32),
+    generation: u32,
     pub width: f32,
     pub height: f32,
     glyph_font: &'static str,
@@ -158,6 +159,7 @@ impl Gfx {
             base_dpi: dpi,
             zoom: 1.0,
             px: (1, 1),
+            generation: 0,
             width: 0.0,
             height: 0.0,
             glyph_font: "Segoe Fluent Icons",
@@ -224,6 +226,7 @@ impl Gfx {
                 .ok()
         };
         self.px = (pw, ph);
+        self.generation += 1;
         self.width = pw as f32 * 96.0 / self.dpi;
         self.height = ph as f32 * 96.0 / self.dpi;
         Ok(())
@@ -366,12 +369,12 @@ impl Gfx {
 
     fn face_spec(&self, face: Face) -> (&'static str, f32, DWRITE_FONT_WEIGHT) {
         match face {
-            Face::Name => ("Segoe UI Variable Text", 13.0, DWRITE_FONT_WEIGHT_MEDIUM),
-            Face::Meta => ("Segoe UI Variable Text", 12.0, DWRITE_FONT_WEIGHT_NORMAL),
-            Face::Small => ("Segoe UI Variable Text", 11.0, DWRITE_FONT_WEIGHT_NORMAL),
-            Face::Badge => ("Segoe UI Variable Text", 10.5, DWRITE_FONT_WEIGHT_SEMI_BOLD),
-            Face::Header => ("Segoe UI Variable Text", 11.5, DWRITE_FONT_WEIGHT_SEMI_BOLD),
-            Face::Big => ("Segoe UI Variable Display", 18.0, DWRITE_FONT_WEIGHT_SEMI_BOLD),
+            Face::Name => ("Segoe UI", 13.0, DWRITE_FONT_WEIGHT_NORMAL),
+            Face::Meta => ("Segoe UI", 12.0, DWRITE_FONT_WEIGHT_NORMAL),
+            Face::Small => ("Segoe UI", 11.0, DWRITE_FONT_WEIGHT_NORMAL),
+            Face::Badge => ("Segoe UI", 10.5, DWRITE_FONT_WEIGHT_NORMAL),
+            Face::Header => ("Segoe UI", 12.0, DWRITE_FONT_WEIGHT_NORMAL),
+            Face::Big => ("Segoe UI", 18.0, DWRITE_FONT_WEIGHT_NORMAL),
             Face::Glyph => (self.glyph_font, 13.0, DWRITE_FONT_WEIGHT_NORMAL),
             Face::GlyphSmall => (self.glyph_font, 9.0, DWRITE_FONT_WEIGHT_NORMAL),
         }
@@ -632,5 +635,32 @@ impl Gfx {
 impl Gfx {
     pub fn zoom(&self) -> f32 {
         self.zoom
+    }
+}
+
+impl Gfx {
+    /// Bumped whenever the render target is recreated: device bitmaps created earlier are no longer valid.
+    pub fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    /// Premultiplied BGRA pixels (top-down) to a device bitmap.
+    pub fn create_bitmap_bgra(&self, w: u32, h: u32, data: &[u8]) -> Option<ID2D1Bitmap> {
+        if w == 0 || h == 0 || data.len() < (w * h * 4) as usize {
+            return None;
+        }
+        let props = D2D1_BITMAP_PROPERTIES {
+            pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
+            dpiX: 96.0,
+            dpiY: 96.0,
+        };
+        unsafe { self.rt.as_ref()?.CreateBitmap(D2D_SIZE_U { width: w, height: h }, Some(data.as_ptr().cast()), w * 4, &props).ok() }
+    }
+
+    /// Draws a bitmap smoothly scaled into `dest` (used for thumbnails).
+    pub fn draw_scaled(&self, bmp: &ID2D1Bitmap, dest: Rect) {
+        unsafe {
+            self.rt().DrawBitmap(bmp, Some(&dest.d2d()), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+        }
     }
 }

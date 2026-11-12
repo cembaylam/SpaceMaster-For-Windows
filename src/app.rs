@@ -23,6 +23,15 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 mod selftest;
+use crate::thumbs;
+use windows::Win32::Graphics::Direct2D::ID2D1Bitmap;
+
+struct Thumb {
+    w: u32,
+    h: u32,
+    data: Vec<u8>,
+    bmp: Option<(u32, ID2D1Bitmap)>,
+}
 
 const SIDEBAR_W: f32 = 212.0;
 const TOP_H: f32 = 44.0;
@@ -104,6 +113,10 @@ pub struct App {
     tracking: bool,
     wheel: [f32; 3],
     high_surrogate: Option<u16>,
+    thumbs: std::collections::HashMap<String, Thumb>,
+    thumb_order: Vec<String>,
+    thumb_requested: Option<String>,
+    thumb_worker: thumbs::Worker,
 }
 
 impl App {
@@ -143,6 +156,42 @@ impl App {
     }
 
     // MARK: Scroll bookkeeping
+
+    /// Asks the worker for a thumbnail of the file under the cursor (once per file version).
+    fn request_thumb(&mut self) {
+        if self.browser.preview.is_some() {
+            return;
+        }
+        let Some(row) = self.browser.cursor_row() else { return };
+        if row.is_dir() {
+            return;
+        }
+        let path = self.browser.path_of(&row.name);
+        let key = format!("{path}|{}|{}", row.mtime, row.size);
+        if self.thumbs.contains_key(&key) || self.thumb_requested.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        let lay = self.layout();
+        let s = self.gfx.dpi / 96.0;
+        let w = ((lay.lists[2].w - 40.0).max(64.0) * s).min(1024.0) as u32;
+        let h = (lay.lists[2].h.min(420.0).max(64.0) * s) as u32;
+        self.thumb_requested = Some(key.clone());
+        self.thumb_worker.request(thumbs::Request { key, path, w, h });
+    }
+
+    fn thumb_arrived(&mut self, r: thumbs::Result) {
+        if self.thumb_requested.as_deref() == Some(r.key.as_str()) {
+            self.thumb_requested = None;
+        }
+        self.thumb_order.retain(|k| k != &r.key);
+        self.thumb_order.push(r.key.clone());
+        if self.thumb_order.len() > 40 {
+            let old = self.thumb_order.remove(0);
+            self.thumbs.remove(&old);
+        }
+        self.thumbs.insert(r.key, Thumb { w: r.w, h: r.h, data: r.data, bmp: None });
+        self.invalidate();
+    }
 
     fn sync_view(&mut self) {
         let lay = self.layout();
@@ -187,6 +236,7 @@ impl App {
         self.last_cwd = cwd;
         self.last_cursor = cursor;
         self.last_preview = pv_path;
+        self.request_thumb();
     }
 
     fn invalidate(&self) {
@@ -538,8 +588,29 @@ impl App {
         g.fill_round(Rect::new(r.x + 20.0, y, bw, 22.0), 11.0, color.alpha(0.16));
         g.text(glyph, Face::GlyphSmall, Rect::new(r.x + 28.0, y, 14.0, 22.0), Align::Center, color);
         g.text(label, Face::Badge, Rect::new(r.x + 46.0, y, bw, 22.0), Align::Left, color);
-        g.paragraph(&row.safety.reason, Face::Meta, Rect::new(r.x + 20.0, y + 30.0, r.w - 40.0, 120.0), t.text2);
-        let _ = path;
+        let rh = g.paragraph(&row.safety.reason, Face::Meta, Rect::new(r.x + 20.0, y + 30.0, r.w - 40.0, 120.0), t.text2);
+
+        // Thumbnail below the info (delivered by the background worker; see request_thumb).
+        let ty = y + 30.0 + rh + 18.0;
+        let avail = Rect::new(r.x + 20.0, ty, r.w - 40.0, (r.bottom() - ty - 16.0).max(0.0));
+        let key = format!("{path}|{}|{}", row.mtime, row.size);
+        if let Some(th) = self.thumbs.get_mut(&key) {
+            if th.w > 0 && avail.h > 40.0 && avail.w > 40.0 {
+                let gen = g.generation();
+                if th.bmp.as_ref().map(|b| b.0 != gen).unwrap_or(true) {
+                    th.bmp = g.create_bitmap_bgra(th.w, th.h, &th.data).map(|b| (gen, b));
+                }
+                if let Some((_, bmp)) = &th.bmp {
+                    let s = g.dpi / 96.0;
+                    let (nw, nh) = (th.w as f32 / s, th.h as f32 / s);
+                    let k = (avail.w / nw).min(avail.h / nh).min(1.0);
+                    let dest = Rect::new(g.snap(avail.x), g.snap(avail.y), nw * k, nh * k);
+                    g.fill_round(dest.inset(-1.0), 5.0, t.panel);
+                    g.draw_scaled(bmp, dest);
+                    g.stroke_round(dest.inset(-0.5), 4.0, t.separator, 1.0);
+                }
+            }
+        }
     }
 
     fn paint_banner(&mut self, b: Rect) {
@@ -1320,6 +1391,10 @@ pub fn run() -> i32 {
             tracking: false,
             wheel: [0.0; 3],
             high_surrogate: None,
+            thumbs: std::collections::HashMap::new(),
+            thumb_order: Vec::new(),
+            thumb_requested: None,
+            thumb_worker: thumbs::Worker::start(hwnd),
         });
         APP_PTR.store(Box::into_raw(boxed_app), Ordering::SeqCst);
         let a = app().unwrap();
@@ -1500,6 +1575,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_SETTINGCHANGE => {
             a.apply_theme();
             DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        thumbs::WM_THUMB => {
+            let r = Box::from_raw(lparam.0 as *mut thumbs::Result);
+            a.thumb_arrived(*r);
+            LRESULT(0)
         }
         WM_DELETED => {
             let boxed = Box::from_raw(lparam.0 as *mut (DeleteRequest, DeleteOutcome));

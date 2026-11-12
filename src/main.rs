@@ -4,6 +4,7 @@ mod app;
 mod gfx;
 mod shell;
 mod theme;
+mod thumbs;
 
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 

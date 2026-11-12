@@ -45,7 +45,7 @@
       <Component Id="MainExecutable">
         <File Id="SpaceMasterExe" Source="target\release\spacemaster.exe" KeyPath="yes">
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="SpaceMaster for Windows"
-                    Description="Fast disk-space manager" WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
+                    Description="Fast disk-space manager" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" Advertise="no" />
         </File>
       </Component>
       <Component Id="ReadmeComponent">
@@ -56,7 +56,7 @@
       </Component>
     </ComponentGroup>
     <Component Id="DesktopShortcutComponent" Directory="DesktopFolder">
-      <Shortcut Id="DesktopShortcutLink" Name="SpaceMaster for Windows" Target="[#SpaceMasterExe]"
+      <Shortcut Id="DesktopShortcutLink" Name="SpaceMaster for Windows" Target="[#SpaceMasterExe]" Icon="AppIcon"
                 WorkingDirectory="INSTALLFOLDER" />
       <RegistryValue Root="HKLM" Key="Software\SpaceMaster for Windows" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
     </Component>

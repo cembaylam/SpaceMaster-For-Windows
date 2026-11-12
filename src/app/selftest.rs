@@ -260,6 +260,44 @@ fn run_checks(hwnd: HWND, r: &mut Report) {
     r.check("zoom reset restores 100%", (a().gfx.zoom() - 1.0).abs() < 0.001 && (a().gfx.width - w0).abs() < 1.0, || format!("{} {}", a().gfx.zoom(), a().gfx.width));
     r.check("zoom is saved to settings", a().browser.settings.get("zoom") == Some("1"), || format!("{:?}", a().browser.settings.get("zoom")));
 
+    // 10c. Thumbnail of an image file arrives from the background worker and is drawn.
+    if let Ok(dir) = std::env::var("SM_START_PATH") {
+        let pic = format!("{dir}\\selftest-pic.bmp");
+        let (w, h) = (200u32, 120u32);
+        let mut bmp: Vec<u8> = Vec::new();
+        let size = 54 + w * h * 3;
+        bmp.extend_from_slice(b"BM");
+        bmp.extend_from_slice(&size.to_le_bytes());
+        bmp.extend_from_slice(&[0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0]);
+        bmp.extend_from_slice(&w.to_le_bytes());
+        bmp.extend_from_slice(&h.to_le_bytes());
+        bmp.extend_from_slice(&[1, 0, 24, 0, 0, 0, 0, 0]);
+        bmp.extend_from_slice(&(w * h * 3).to_le_bytes());
+        bmp.extend_from_slice(&[0; 16]);
+        for y in 0..h {
+            for x in 0..w {
+                bmp.extend_from_slice(&[(x * 255 / w) as u8, (y * 255 / h) as u8, 200]);
+            }
+        }
+        let _ = std::fs::write(&pic, &bmp);
+        if a().browser.cd(&dir, None, true) {
+            a().browser.app_activated();
+            let idx = a().browser.current.borrow().index_of(Some("selftest-pic.bmp"));
+            if let Some(i) = idx {
+                a().browser.move_cursor(i as isize);
+                a().after_input();
+                let got = pump_until(Duration::from_secs(20), || a().thumbs.values().any(|t| t.w > 0));
+                r.check("thumbnail arrives for an image file", got, || "no thumbnail".into());
+                paint_now(hwnd);
+                let drawn = a().thumbs.values().any(|t| t.bmp.is_some());
+                r.check("thumbnail is drawn in the info panel", drawn, || "no device bitmap".into());
+            } else {
+                r.check("image file is listed", false, || "missing".into());
+            }
+        }
+        let _ = std::fs::remove_file(&pic);
+    }
+
     // 11. Final paint after everything, and the timer stops when idle.
     a().timer();
     paint_now(hwnd);
