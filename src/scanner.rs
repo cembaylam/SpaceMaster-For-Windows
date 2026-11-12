@@ -245,6 +245,13 @@ fn push(shared: &Shared, jobs: Vec<Job>) {
 }
 
 fn worker_loop(shared: &Shared) {
+    // Scanning is background work: it must never take CPU from the foreground (video playback, scrolling).
+    unsafe {
+        let _ = windows::Win32::System::Threading::SetThreadPriority(
+            windows::Win32::System::Threading::GetCurrentThread(),
+            windows::Win32::System::Threading::THREAD_PRIORITY_BELOW_NORMAL,
+        );
+    }
     let mut buf = DirBuf::new();
     let mut names: Vec<u16> = Vec::with_capacity(4096);
     let mut subs: Vec<Sub> = Vec::with_capacity(256);

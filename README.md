@@ -74,7 +74,7 @@ cargo run --release                       # build and launch
 cargo test                                # 67 tests incl. a real-window UI self-test
 cargo run --release --bin sm-bench -- C:\ --runs 3        # scanner benchmark
 cargo run --release --bin sm-bench -- --stress 100000     # big-folder UI timings
-.\scripts\package.ps1                     # dist\SpaceMaster-1.0.2-win-x64.zip
+.\scripts\package.ps1                     # dist\SpaceMaster-1.0.3-win-x64.zip
 ```
 
 Tests: unit tests (formatting, safety rules, Recycle Bin parsing), scanner tests against an independent `std::fs` walk

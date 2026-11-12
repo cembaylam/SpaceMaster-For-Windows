@@ -10,7 +10,8 @@ fn main() {
     // "asInvoker" so `cargo test` can launch the UI self-test without a UAC prompt.
     let release = std::env::var("PROFILE").map(|p| p == "release").unwrap_or(false);
     let manifest = std::fs::read_to_string("assets/app.manifest").expect("read manifest");
-    let manifest = if release {
+    println!("cargo:rerun-if-env-changed=SM_ASINVOKER");
+    let manifest = if release && std::env::var_os("SM_ASINVOKER").is_none() {
         manifest.replace("level=\"asInvoker\"", "level=\"requireAdministrator\"")
     } else {
         manifest

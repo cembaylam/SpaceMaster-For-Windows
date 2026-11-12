@@ -303,6 +303,8 @@ pub struct Viewer {
     transient: Option<String>,
     bar_until: Instant,
     pub fullscreen: bool,
+    ticks: u32,
+    last_rect: std::cell::Cell<(i32, i32, i32, i32)>,
 }
 
 impl Viewer {
@@ -332,6 +334,8 @@ impl Viewer {
             transient: None,
             bar_until: Instant::now(),
             fullscreen: false,
+            ticks: 0,
+            last_rect: std::cell::Cell::new((0, 0, 0, 0)),
         }
     }
 
@@ -350,6 +354,7 @@ impl Viewer {
         self.caption = "Loading\u{2026}".into();
         self.hints = String::new();
         self.content = Content::Loading;
+        self.last_rect.set((0, 0, 0, 0));
         spawn_load(hwnd, self.token, path.to_string(), dark);
     }
 
@@ -518,6 +523,12 @@ impl Viewer {
         let r = self.content_rect(g);
         let s = g.dpi / 96.0;
         let (x, y, w, h) = ((r.x * s) as i32, (r.y * s) as i32, (r.w * s) as i32, (r.h * s) as i32);
+        // Only touch the native windows when the rectangle really changed: re-positioning the video window makes the
+        // player re-layout its picture, which shows up as stutter when done on every repaint.
+        if self.last_rect.get() == (x, y, w, h) {
+            return;
+        }
+        self.last_rect.set((x, y, w, h));
         if let (Content::Media, Some(p)) = (&self.content, &self.player) {
             p.set_rect(x, y, w, h);
         }
@@ -625,7 +636,10 @@ impl Viewer {
                         p.show(true);
                     }
                 }
-                dirty = true;
+                // Repaint the progress bar ~3x per second while playing (every repaint presents the whole window,
+                // which competes with the video surface); user input repaints immediately by itself.
+                self.ticks = self.ticks.wrapping_add(1);
+                dirty = self.ticks % 4 == 0 || self.scrubbing || self.seek_hold.is_some() || self.video_pending;
             }
             // our own key repeat while Left/Right is held (110 ms, no OS repeat delay)
             if let Some((vk, secs, last)) = self.seek_hold {
