@@ -55,7 +55,7 @@ Direct2D/DirectWrite, tuned for one machine (Ryzen 9 5950X, `target-cpu=native`)
 Everything is built in, no external programs. Like FileMaster, every file type has a viewer:
 
 - **Images** (zoom, pan, fit, centered), **PDF** (Windows' own engine, continuous scroll, zoom), **video and audio**
-  (LibVLC with fast keyframe seeking: `←/→` seek 10 s, hold to scrub with acceleration, `Shift` 30 s, `Ctrl` 1 min,
+  (LibVLC with fast keyframe seeking: `←/→` seek 10 s, hold to scrub smoothly (up to 8x), `Shift` 30 s, `Ctrl` 1 min,
   `0`-`9` jump to 0-90 %, `j/k` volume, `m` mute, `f` fullscreen, click or drag the bar).
 - **Text and code** with syntax colors in Fira Code (virtualized, instant scrolling, `Ctrl+C` copies all),
   **Markdown and HTML** rendered (WebView2), **Word/Excel/PowerPoint/OpenDocument** text, **archive** contents
@@ -74,7 +74,7 @@ cargo run --release                       # build and launch
 cargo test                                # 67 tests incl. a real-window UI self-test
 cargo run --release --bin sm-bench -- C:\ --runs 3        # scanner benchmark
 cargo run --release --bin sm-bench -- --stress 100000     # big-folder UI timings
-.\scripts\package.ps1                     # dist\SpaceMaster-1.0.3-win-x64.zip
+.\scripts\package.ps1                     # dist\SpaceMaster-1.0.4-win-x64.zip
 ```
 
 Tests: unit tests (formatting, safety rules, Recycle Bin parsing), scanner tests against an independent `std::fs` walk

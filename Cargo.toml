@@ -1,6 +1,6 @@
 [package]
 name = "spacemaster"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 description = "A very fast, native disk-space manager for Windows 11."
 license = "MIT"

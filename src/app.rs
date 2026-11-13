@@ -113,6 +113,7 @@ pub struct App {
     viewer: viewer::Viewer,
     fs_saved: Option<(isize, WINDOWPLACEMENT)>,
     timer_on: bool,
+    timer_fast: bool,
     tracking: bool,
     wheel: [f32; 3],
     high_surrogate: Option<u16>,
@@ -1111,6 +1112,7 @@ impl App {
         }
         self.invalidate();
         self.ensure_timer();
+        self.sync_timer_rate();
     }
 
     /// n / p: the next / previous file (not folder) in the current list.
@@ -1156,16 +1158,29 @@ impl App {
         }
     }
 
+    /// ~60 Hz while a seek key is held on a video (smooth scrubbing), the normal 12 Hz otherwise.
+    fn sync_timer_rate(&mut self) {
+        let fast = self.viewer.active && self.viewer.fast_timer();
+        if fast != self.timer_fast && self.timer_on {
+            self.timer_fast = fast;
+            unsafe {
+                SetTimer(Some(self.hwnd), TIMER_ID, if fast { 16 } else { 1000 / 12 }, None);
+            }
+        }
+    }
+
     fn timer(&mut self) {
         if self.viewer.active {
             if self.viewer.tick() {
                 self.invalidate();
             }
+            self.sync_timer_rate();
             if !self.viewer.needs_timer() {
                 unsafe {
                     let _ = KillTimer(Some(self.hwnd), TIMER_ID);
                 }
                 self.timer_on = false;
+                self.timer_fast = false;
             }
             return;
         }
@@ -1518,6 +1533,7 @@ pub fn run() -> i32 {
             viewer: viewer::Viewer::new(),
             fs_saved: None,
             timer_on: false,
+            timer_fast: false,
             tracking: false,
             wheel: [0.0; 3],
             high_surrogate: None,
