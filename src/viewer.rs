@@ -594,6 +594,11 @@ impl Viewer {
             return format!("page {} of {}  \u{b7}  {}", pv.cur_page + 1, pv.sizes.len(), self.caption);
         }
         if let (Content::Media, Some(p)) = (&self.content, &self.player) {
+            if std::env::var_os("SM_VIDEO_DEBUG").is_some() {
+                if let Some((dec, shown, lost)) = p.stats() {
+                    return format!("decoded {dec}  displayed {shown}  LOST {lost}");
+                }
+            }
             return format!("vol {}%{}{}", p.volume(), if p.muted() { " (muted)" } else { "" }, if p.is_playing() { "" } else { "   paused" });
         }
         self.caption.clone()

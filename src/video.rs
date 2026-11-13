@@ -48,11 +48,34 @@ const EV_END_REACHED: c_int = 265;
 const ST_NOTHING: c_int = 0;
 const ST_STOPPED: c_int = 5;
 
+/// libvlc_media_stats_t (libvlc 3.x).
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct MediaStats {
+    read_bytes: c_int,
+    input_bitrate: f32,
+    demux_read_bytes: c_int,
+    demux_bitrate: f32,
+    demux_corrupted: c_int,
+    demux_discontinuity: c_int,
+    decoded_video: c_int,
+    decoded_audio: c_int,
+    displayed_pictures: c_int,
+    lost_pictures: c_int,
+    played_abuffers: c_int,
+    lost_abuffers: c_int,
+    sent_packets: c_int,
+    sent_bytes: c_int,
+    send_bitrate: f32,
+}
+
 struct Api {
     new: unsafe extern "C" fn(c_int, *const *const c_char) -> Instance,
     release: unsafe extern "C" fn(Instance),
     media_new_path: unsafe extern "C" fn(Instance, *const c_char) -> Media,
     media_release: unsafe extern "C" fn(Media),
+    mp_get_media: unsafe extern "C" fn(MediaPlayer) -> Media,
+    media_get_stats: unsafe extern "C" fn(Media, *mut MediaStats) -> c_int,
     mp_new: unsafe extern "C" fn(Instance) -> MediaPlayer,
     mp_release: unsafe extern "C" fn(MediaPlayer),
     mp_set_media: unsafe extern "C" fn(MediaPlayer, Media),
@@ -126,6 +149,8 @@ fn load_api() -> Result<Api, String> {
         release: sym!("libvlc_release"),
         media_new_path: sym!("libvlc_media_new_path"),
         media_release: sym!("libvlc_media_release"),
+        mp_get_media: sym!("libvlc_media_player_get_media"),
+        media_get_stats: sym!("libvlc_media_get_stats"),
         mp_new: sym!("libvlc_media_player_new"),
         mp_release: sym!("libvlc_media_player_release"),
         mp_set_media: sym!("libvlc_media_player_set_media"),
@@ -256,11 +281,18 @@ impl Player {
         let opts = [
             "--no-video-title-show",
             "--no-osd",
-            "--file-caching=100",
+            // 100 ms (the FileMaster value) made the video output drop about 2 late frames per second on high
+            // frame rate files; 200 ms drops none and costs no measurable seek latency (see tests/video.rs).
+            "--file-caching=200",
             "--input-fast-seek",
             "--quiet",
         ];
-        let c_opts: Vec<CString> = opts.iter().map(|o| CString::new(*o).unwrap()).collect();
+        // SM_VLC_EXTRA="--opt1;--opt2": additional libvlc options (tuning and diagnostics).
+        let extra: Vec<String> = std::env::var("SM_VLC_EXTRA")
+            .map(|v| v.split(';').filter(|s| !s.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default();
+        let c_opts: Vec<CString> =
+            opts.iter().map(|o| o.to_string()).chain(extra).filter_map(|o| CString::new(o).ok()).collect();
         let ptrs: Vec<*const c_char> = c_opts.iter().map(|c| c.as_ptr()).collect();
 
         let inst = unsafe { (api.new)(ptrs.len() as c_int, ptrs.as_ptr()) };
@@ -447,6 +479,21 @@ impl Player {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
         self.sh.frame_ready.store(false, Ordering::Release);
+    }
+
+    /// Playback counters of the current media: (decoded video frames, displayed pictures, lost pictures).
+    /// "Lost" pictures are frames the video output dropped because they were late: visible as skipped frames.
+    pub fn stats(&self) -> Option<(i32, i32, i32)> {
+        unsafe {
+            let m = (self.api.mp_get_media)(self.mp);
+            if m.is_null() {
+                return None;
+            }
+            let mut s = MediaStats::default();
+            let ok = (self.api.media_get_stats)(m, &mut s) != 0;
+            (self.api.media_release)(m);
+            ok.then_some((s.decoded_video, s.displayed_pictures, s.lost_pictures))
+        }
     }
 
     /// Native video size, once known.
